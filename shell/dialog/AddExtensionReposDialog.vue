@@ -6,6 +6,9 @@ import { UI_PLUGINS_REPOS } from '@shell/config/uiplugins';
 import { isRancherPrime } from '@shell/config/version';
 import { RcHeading } from '@components/RcHeading';
 
+// Large git repos (e.g. ui-plugin-charts) can take a while to be cloned and indexed by the backend
+const REPO_INDEX_TIMEOUT = 5 * 60 * 1000;
+
 export default {
   emits: ['close'],
 
@@ -85,9 +88,19 @@ export default {
             }
           });
 
-          promises.push(pluginCR.save());
+          // A new repo reports as active before its index is built, wait for it before refreshing.
+          // Look the repo up each time, as reloading the repo list replaces the instance in the store.
+          promises.push(pluginCR.save().then(() => pluginCR.waitForTestFn(() => {
+            const repo = this.$store.getters['management/byId'](CATALOG.CLUSTER_REPO, pluginCR.id);
+
+            return !!repo?.status?.indexConfigMapName || !!repo?.stateObj?.error;
+          }, 'repository index', REPO_INDEX_TIMEOUT, 1000)));
         }
       }
+
+      // Close straight away, the extensions page is refreshed via done() once the repos are read
+      this.$emit('close');
+      btnCb(true);
 
       if (promises.length) {
         const res = await Promise.allSettled(promises);
@@ -102,9 +115,6 @@ export default {
       }
 
       this.done();
-      this.$emit('close');
-
-      btnCb(true);
     },
   }
 };
